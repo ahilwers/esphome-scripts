@@ -1,0 +1,357 @@
+esphome:
+  name: garage-door-opener
+  friendly_name: garage-door-opener
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret garage_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret garage_esphome_password
+
+ethernet:
+  type: W5500
+  mosi_pin: GPIO11
+  miso_pin: GPIO12
+  clk_pin: GPIO13
+  cs_pin: GPIO14
+  reset_pin: GPIO9
+  interrupt_pin: GPIO10
+  clock_speed: 25MHz
+
+globals:
+  - id: garage01_moving
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: garage02_moving
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: garage01_last_direction
+    type: int
+    restore_value: no
+    initial_value: '0'
+    #  1 = opening
+    # -1 = closing
+    #  0 = idle/unknown
+
+  - id: garage02_last_direction
+    type: int
+    restore_value: no
+    initial_value: '0'
+    #  1 = opening
+    # -1 = closing
+    #  0 = idle/unknown
+
+switch:
+  - platform: gpio
+    pin:
+      number: GPIO21
+      inverted: true
+    id: relay01
+    internal: true
+
+  - platform: gpio
+    pin:
+      number: GPIO48
+      inverted: true
+    id: relay02
+    internal: true
+
+script:
+  - id: garage01_pulse
+    mode: single
+    then:
+      - switch.turn_on: relay01
+      - delay: 500ms
+      - switch.turn_off: relay01
+
+  - id: garage02_pulse
+    mode: single
+    then:
+      - switch.turn_on: relay02
+      - delay: 500ms
+      - switch.turn_off: relay02
+
+  - id: garage01_motion_timeout
+    mode: restart
+    then:
+      - delay: 25s
+      - if:
+          condition:
+            lambda: 'return id(garage01_moving);'
+          then:
+            - lambda: |-
+                id(garage01_moving) = false;
+                id(garage01_last_direction) = 0;
+            - cover.template.publish:
+                id: garage01_cover
+                state: OPEN
+                current_operation: IDLE
+
+  - id: garage02_motion_timeout
+    mode: restart
+    then:
+      - delay: 25s
+      - if:
+          condition:
+            lambda: 'return id(garage02_moving);'
+          then:
+            - lambda: |-
+                id(garage02_moving) = false;
+                id(garage02_last_direction) = 0;
+            - cover.template.publish:
+                id: garage02_cover
+                state: OPEN
+                current_operation: IDLE
+
+binary_sensor:
+  - platform: gpio
+    id: garage01_open_sensor
+    internal: true
+    pin:
+      number: GPIO17
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    name: "Garage 01 geöffnet"
+    icon: "mdi:garage"
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_press:
+      - script.stop: garage01_motion_timeout
+      - lambda: |-
+          id(garage01_moving) = false;
+          id(garage01_last_direction) = 0;
+      - cover.template.publish:
+          id: garage01_cover
+          state: OPEN
+          current_operation: IDLE
+
+  - platform: gpio
+    id: garage01_closed_sensor
+    internal: true
+    pin:
+      number: GPIO18
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    name: "Garage 01 geschlossen"
+    icon: "mdi:garage"
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_press:
+      - script.stop: garage01_motion_timeout
+      - lambda: |-
+          id(garage01_moving) = false;
+          id(garage01_last_direction) = 0;
+      - cover.template.publish:
+          id: garage01_cover
+          state: CLOSED
+          current_operation: IDLE
+
+  - platform: gpio
+    id: garage02_open_sensor
+    internal: true
+    pin:
+      number: GPIO47
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    name: "Garage 02 geöffnet"
+    icon: "mdi:garage"
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_press:
+      - script.stop: garage02_motion_timeout
+      - lambda: |-
+          id(garage02_moving) = false;
+          id(garage02_last_direction) = 0;
+      - cover.template.publish:
+          id: garage02_cover
+          state: OPEN
+          current_operation: IDLE
+
+  - platform: gpio
+    id: garage02_closed_sensor
+    internal: true
+    pin:
+      number: GPIO42
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    name: "Garage 02 geschlossen"
+    icon: "mdi:garage"
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_press:
+      - script.stop: garage02_motion_timeout
+      - lambda: |-
+          id(garage02_moving) = false;
+          id(garage02_last_direction) = 0;
+      - cover.template.publish:
+          id: garage02_cover
+          state: CLOSED
+          current_operation: IDLE
+
+  - platform: template
+    id: garage01_jammed
+    name: "Garage 01 nicht in Endlage"
+    device_class: problem
+    lambda: |-
+      if (!id(garage01_open_sensor).state &&
+          !id(garage01_closed_sensor).state &&
+          !id(garage01_moving))
+        return true;
+      return false;          
+
+  - platform: template
+    id: garage02_jammed
+    name: "Garage 02 nicht in Endlage"
+    device_class: problem
+    lambda: |-
+      if (!id(garage02_open_sensor).state &&
+          !id(garage02_closed_sensor).state &&
+          !id(garage02_moving))
+        return true;
+      return false;          
+
+cover:
+  - platform: template
+    id: garage01_cover
+    name: "Garage 01 Tor"
+    device_class: garage
+    assumed_state: true
+
+    lambda: |-
+      if (id(garage01_open_sensor).state) {
+        return COVER_OPEN;
+      }
+      if (id(garage01_closed_sensor).state) {
+        return COVER_CLOSED;
+      }
+      return {};
+
+    open_action:
+      - if:
+          condition:
+            lambda: |-
+              return !id(garage01_moving) && !id(garage01_open_sensor).state;
+          then:
+            - lambda: |-
+                id(garage01_moving) = true;
+                id(garage01_last_direction) = 1;
+            - script.execute: garage01_pulse
+            - cover.template.publish:
+                id: garage01_cover
+                current_operation: OPENING
+            - script.execute: garage01_motion_timeout
+
+    close_action:
+      - if:
+          condition:
+            lambda: |-
+              return !id(garage01_moving) && !id(garage01_closed_sensor).state;
+          then:
+            - lambda: |-
+                id(garage01_moving) = true;
+                id(garage01_last_direction) = -1;
+            - script.execute: garage01_pulse
+            - cover.template.publish:
+                id: garage01_cover
+                current_operation: CLOSING
+            - script.execute: garage01_motion_timeout
+
+    stop_action:
+      - if:
+          condition:
+            lambda: 'return id(garage01_moving);'
+          then:
+            - script.execute: garage01_pulse
+            - script.stop: garage01_motion_timeout
+            - lambda: |-
+                id(garage01_moving) = false;
+                id(garage01_last_direction) = 0;
+            - cover.template.publish:
+                id: garage01_cover
+                current_operation: IDLE   
+
+  - platform: template
+    id: garage02_cover
+    name: "Garage 02 Tor"
+    device_class: garage
+    assumed_state: true
+
+    lambda: |-
+      if (id(garage02_open_sensor).state) {
+        return COVER_OPEN;
+      }
+      if (id(garage02_closed_sensor).state) {
+        return COVER_CLOSED;
+      }
+      return {};
+
+    open_action:
+      - if:
+          condition:
+            lambda: |-
+              return !id(garage02_moving) && !id(garage02_open_sensor).state;
+          then:
+            - lambda: |-
+                id(garage02_moving) = true;
+                id(garage02_last_direction) = 1;
+            - script.execute: garage02_pulse
+            - cover.template.publish:
+                id: garage02_cover
+                current_operation: OPENING
+            - script.execute: garage02_motion_timeout
+
+    close_action:
+      - if:
+          condition:
+            lambda: |-
+              return !id(garage02_moving) && !id(garage02_closed_sensor).state;
+          then:
+            - lambda: |-
+                id(garage02_moving) = true;
+                id(garage02_last_direction) = -1;
+            - script.execute: garage02_pulse
+            - cover.template.publish:
+                id: garage02_cover
+                current_operation: CLOSING
+            - script.execute: garage02_motion_timeout
+
+    stop_action:
+      - if:
+          condition:
+            lambda: 'return id(garage02_moving);'
+          then:
+            - script.execute: garage02_pulse
+            - script.stop: garage02_motion_timeout
+            - lambda: |-
+                id(garage02_moving) = false;
+                id(garage02_last_direction) = 0;
+            - cover.template.publish:
+                id: garage02_cover
+                current_operation: IDLE   
