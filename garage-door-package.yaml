@@ -1,0 +1,176 @@
+# ============================================================
+# ESPHome Package: Garagentor-Steuerung (ein Tor)
+#
+# Erforderliche Variablen (über 'vars' beim !include angeben):
+#   door_id          - Eindeutige ID ohne Leerzeichen, z.B. garage01
+#   door_name        - Anzeigename,               z.B. "Garage 01"
+#   relay_pin        - GPIO-Pin des Relais,        z.B. GPIO21
+#   open_sensor_pin  - GPIO-Pin Endlage offen,     z.B. GPIO17
+#   closed_sensor_pin- GPIO-Pin Endlage geschlossen z.B. GPIO18
+# ============================================================
+
+globals:
+  - id: ${door_id}_moving
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: ${door_id}_last_direction
+    type: int
+    restore_value: no
+    initial_value: '0'
+    #  1 = opening
+    # -1 = closing
+    #  0 = idle/unknown
+
+switch:
+  - platform: gpio
+    pin:
+      number: ${relay_pin}
+      inverted: true
+    id: ${door_id}_relay
+    internal: true
+
+script:
+  - id: ${door_id}_pulse
+    mode: single
+    then:
+      - switch.turn_on: ${door_id}_relay
+      - delay: 500ms
+      - switch.turn_off: ${door_id}_relay
+
+  - id: ${door_id}_motion_timeout
+    mode: restart
+    then:
+      - delay: 25s
+      - if:
+          condition:
+            lambda: 'return id(${door_id}_moving);'
+          then:
+            - lambda: |-
+                id(${door_id}_moving) = false;
+                id(${door_id}_last_direction) = 0;
+            - cover.template.publish:
+                id: ${door_id}_cover
+                state: OPEN
+                current_operation: IDLE
+
+binary_sensor:
+  - platform: gpio
+    id: ${door_id}_open_sensor
+    internal: true
+    pin:
+      number: ${open_sensor_pin}
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    name: "${door_name} geöffnet"
+    icon: "mdi:garage"
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_press:
+      - script.stop: ${door_id}_motion_timeout
+      - lambda: |-
+          id(${door_id}_moving) = false;
+          id(${door_id}_last_direction) = 0;
+      - cover.template.publish:
+          id: ${door_id}_cover
+          state: OPEN
+          current_operation: IDLE
+
+  - platform: gpio
+    id: ${door_id}_closed_sensor
+    internal: true
+    pin:
+      number: ${closed_sensor_pin}
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    name: "${door_name} geschlossen"
+    icon: "mdi:garage"
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_press:
+      - script.stop: ${door_id}_motion_timeout
+      - lambda: |-
+          id(${door_id}_moving) = false;
+          id(${door_id}_last_direction) = 0;
+      - cover.template.publish:
+          id: ${door_id}_cover
+          state: CLOSED
+          current_operation: IDLE
+
+  - platform: template
+    id: ${door_id}_jammed
+    name: "${door_name} nicht in Endlage"
+    device_class: problem
+    lambda: |-
+      if (!id(${door_id}_open_sensor).state &&
+          !id(${door_id}_closed_sensor).state &&
+          !id(${door_id}_moving))
+        return true;
+      return false;
+
+cover:
+  - platform: template
+    id: ${door_id}_cover
+    name: "${door_name} Tor"
+    device_class: garage
+    assumed_state: true
+
+    lambda: |-
+      if (id(${door_id}_open_sensor).state) {
+        return COVER_OPEN;
+      }
+      if (id(${door_id}_closed_sensor).state) {
+        return COVER_CLOSED;
+      }
+      return {};
+
+    open_action:
+      - if:
+          condition:
+            lambda: |-
+              return !id(${door_id}_moving) && !id(${door_id}_open_sensor).state;
+          then:
+            - lambda: |-
+                id(${door_id}_moving) = true;
+                id(${door_id}_last_direction) = 1;
+            - script.execute: ${door_id}_pulse
+            - cover.template.publish:
+                id: ${door_id}_cover
+                current_operation: OPENING
+            - script.execute: ${door_id}_motion_timeout
+
+    close_action:
+      - if:
+          condition:
+            lambda: |-
+              return !id(${door_id}_moving) && !id(${door_id}_closed_sensor).state;
+          then:
+            - lambda: |-
+                id(${door_id}_moving) = true;
+                id(${door_id}_last_direction) = -1;
+            - script.execute: ${door_id}_pulse
+            - cover.template.publish:
+                id: ${door_id}_cover
+                current_operation: CLOSING
+            - script.execute: ${door_id}_motion_timeout
+
+    stop_action:
+      - if:
+          condition:
+            lambda: 'return id(${door_id}_moving);'
+          then:
+            - script.execute: ${door_id}_pulse
+            - script.stop: ${door_id}_motion_timeout
+            - lambda: |-
+                id(${door_id}_moving) = false;
+                id(${door_id}_last_direction) = 0;
+            - cover.template.publish:
+                id: ${door_id}_cover
+                current_operation: IDLE
