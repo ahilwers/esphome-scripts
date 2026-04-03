@@ -1,12 +1,12 @@
 # ============================================================
-# ESPHome Package: Garagentor-Steuerung (ein Tor)
+# ESPHome Package: Garage Door Controller (single door)
 #
-# Erforderliche Variablen (über 'vars' beim !include angeben):
-#   door_id          - Eindeutige ID ohne Leerzeichen, z.B. garage01
-#   door_name        - Anzeigename,               z.B. "Garage 01"
-#   relay_pin        - GPIO-Pin des Relais,        z.B. GPIO21
-#   open_sensor_pin  - GPIO-Pin Endlage offen,     z.B. GPIO17
-#   closed_sensor_pin- GPIO-Pin Endlage geschlossen z.B. GPIO18
+# Required variables (provide via 'vars' in the !include block):
+#   door_id           - Unique ID without spaces,  e.g. garage01
+#   door_name         - Display name,              e.g. "Garage 01"
+#   relay_pin         - GPIO pin of the relay,     e.g. GPIO21
+#   open_sensor_pin   - GPIO pin for open limit,   e.g. GPIO17
+#   closed_sensor_pin - GPIO pin for closed limit, e.g. GPIO18
 # ============================================================
 
 globals:
@@ -21,7 +21,7 @@ globals:
     initial_value: '0'
     #  1 = opening
     # -1 = closing
-    #  0 = idle/unknown
+    #  0 = idle / unknown
 
 switch:
   - platform: gpio
