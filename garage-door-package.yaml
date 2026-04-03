@@ -7,22 +7,32 @@
 #   relay_pin         - GPIO pin of the relay,     e.g. GPIO21
 #   open_sensor_pin   - GPIO pin for open limit,   e.g. GPIO17
 #   closed_sensor_pin - GPIO pin for closed limit, e.g. GPIO18
+#
+# State logic (entirely driven by limit switches, not the relay):
+#   closed_sensor releases → door is leaving closed position → OPENING
+#   open_sensor   releases → door is leaving open position   → CLOSING
+#   open_sensor   closes   → door reached open position      → OPEN / IDLE
+#   closed_sensor closes   → door reached closed position    → CLOSED / IDLE
+#   timeout after 25 s     → motion stalled, assumed OPEN    → OPEN / IDLE
 # ============================================================
 
 globals:
   - id: ${door_id}_moving
     type: bool
     restore_value: no
-    initial_value: 'false'
+    initial_value: "false"
 
   - id: ${door_id}_last_direction
     type: int
     restore_value: no
-    initial_value: '0'
+    initial_value: "0"
     #  1 = opening
     # -1 = closing
     #  0 = idle / unknown
 
+# ---------------------------------------------------------------------------
+# Relay – sends a short pulse to trigger the door motor
+# ---------------------------------------------------------------------------
 switch:
   - platform: gpio
     pin:
@@ -31,7 +41,11 @@ switch:
     id: ${door_id}_relay
     internal: true
 
+# ---------------------------------------------------------------------------
+# Scripts
+# ---------------------------------------------------------------------------
 script:
+  # Triggers the motor: closes the relay for 500 ms, then releases it
   - id: ${door_id}_pulse
     mode: single
     then:
@@ -39,13 +53,15 @@ script:
       - delay: 500ms
       - switch.turn_off: ${door_id}_relay
 
+  # Safety fallback: if the door has not reached an end position within 25 s,
+  # assume it is stuck in an unknown position and reset the moving state.
   - id: ${door_id}_motion_timeout
     mode: restart
     then:
       - delay: 25s
       - if:
           condition:
-            lambda: 'return id(${door_id}_moving);'
+            lambda: "return id(${door_id}_moving);"
           then:
             - lambda: |-
                 id(${door_id}_moving) = false;
@@ -55,7 +71,11 @@ script:
                 state: OPEN
                 current_operation: IDLE
 
+# ---------------------------------------------------------------------------
+# Limit switches
+# ---------------------------------------------------------------------------
 binary_sensor:
+  # Open limit switch — active (pressed) when the door is fully open
   - platform: gpio
     id: ${door_id}_open_sensor
     internal: true
@@ -66,10 +86,12 @@ binary_sensor:
         input: true
         pullup: true
     name: "${door_name} geöffnet"
-    icon: "mdi:garage"
+    icon: "mdi:garage-open"
     filters:
       - delayed_on: 50ms
       - delayed_off: 50ms
+
+    # Door has reached the fully open position
     on_press:
       - script.stop: ${door_id}_motion_timeout
       - lambda: |-
@@ -80,6 +102,17 @@ binary_sensor:
           state: OPEN
           current_operation: IDLE
 
+    # Door is leaving the open position → it must be closing
+    on_release:
+      - lambda: |-
+          id(${door_id}_moving) = true;
+          id(${door_id}_last_direction) = -1;
+      - cover.template.publish:
+          id: ${door_id}_cover
+          current_operation: CLOSING
+      - script.execute: ${door_id}_motion_timeout
+
+  # Closed limit switch — active (pressed) when the door is fully closed
   - platform: gpio
     id: ${door_id}_closed_sensor
     internal: true
@@ -94,6 +127,8 @@ binary_sensor:
     filters:
       - delayed_on: 50ms
       - delayed_off: 50ms
+
+    # Door has reached the fully closed position
     on_press:
       - script.stop: ${door_id}_motion_timeout
       - lambda: |-
@@ -104,6 +139,18 @@ binary_sensor:
           state: CLOSED
           current_operation: IDLE
 
+    # Door is leaving the closed position → it must be opening
+    on_release:
+      - lambda: |-
+          id(${door_id}_moving) = true;
+          id(${door_id}_last_direction) = 1;
+      - cover.template.publish:
+          id: ${door_id}_cover
+          current_operation: OPENING
+      - script.execute: ${door_id}_motion_timeout
+
+  # Problem sensor: active when both contacts are open and the door is idle
+  # (door stuck somewhere in between)
   - platform: template
     id: ${door_id}_jammed
     name: "${door_name} nicht in Endlage"
@@ -115,6 +162,9 @@ binary_sensor:
         return true;
       return false;
 
+# ---------------------------------------------------------------------------
+# Cover entity (exposed to Home Assistant)
+# ---------------------------------------------------------------------------
 cover:
   - platform: template
     id: ${door_id}_cover
@@ -122,49 +172,34 @@ cover:
     device_class: garage
     assumed_state: true
 
+    # Report current position based on limit switches
     lambda: |-
-      if (id(${door_id}_open_sensor).state) {
-        return COVER_OPEN;
-      }
-      if (id(${door_id}_closed_sensor).state) {
-        return COVER_CLOSED;
-      }
+      if (id(${door_id}_open_sensor).state)   return COVER_OPEN;
+      if (id(${door_id}_closed_sensor).state) return COVER_CLOSED;
       return {};
 
+    # Relay actions only send the pulse — state tracking is done by the
+    # limit switch events above, so no state changes happen here.
     open_action:
       - if:
           condition:
-            lambda: |-
-              return !id(${door_id}_moving) && !id(${door_id}_open_sensor).state;
+            # Only fire if the door is not already open or in the process of opening
+            lambda: "return !id(${door_id}_moving) && !id(${door_id}_open_sensor).state;"
           then:
-            - lambda: |-
-                id(${door_id}_moving) = true;
-                id(${door_id}_last_direction) = 1;
             - script.execute: ${door_id}_pulse
-            - cover.template.publish:
-                id: ${door_id}_cover
-                current_operation: OPENING
-            - script.execute: ${door_id}_motion_timeout
 
     close_action:
       - if:
           condition:
-            lambda: |-
-              return !id(${door_id}_moving) && !id(${door_id}_closed_sensor).state;
+            # Only fire if the door is not already closed or in the process of closing
+            lambda: "return !id(${door_id}_moving) && !id(${door_id}_closed_sensor).state;"
           then:
-            - lambda: |-
-                id(${door_id}_moving) = true;
-                id(${door_id}_last_direction) = -1;
             - script.execute: ${door_id}_pulse
-            - cover.template.publish:
-                id: ${door_id}_cover
-                current_operation: CLOSING
-            - script.execute: ${door_id}_motion_timeout
 
     stop_action:
       - if:
           condition:
-            lambda: 'return id(${door_id}_moving);'
+            lambda: "return id(${door_id}_moving);"
           then:
             - script.execute: ${door_id}_pulse
             - script.stop: ${door_id}_motion_timeout
