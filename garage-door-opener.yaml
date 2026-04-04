@@ -36,8 +36,8 @@ packages:
       door_id: garage01
       door_name: "Garage 01"
       relay_pin: GPIO21
-      open_sensor_pin: GPIO17
-      closed_sensor_pin: GPIO18
+      open_sensor_pin: GPIO18
+      closed_sensor_pin: GPIO17
 
   garage02: !include
     file: garage-door-package.yaml
@@ -45,5 +45,5 @@ packages:
       door_id: garage02
       door_name: "Garage 02"
       relay_pin: GPIO48
-      open_sensor_pin: GPIO47
-      closed_sensor_pin: GPIO42
+      open_sensor_pin: GPIO42
+      closed_sensor_pin: GPIO47
