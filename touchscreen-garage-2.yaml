@@ -193,6 +193,78 @@ binary_sensor:
             state:
               checked: !lambda return x;
 
+  - platform: homeassistant
+    id: surplus_charging
+    entity_id: input_boolean.auto_uberschussladen
+    trigger_on_initial_state: true
+    on_state:
+      then:
+        - lvgl.widget.update:
+            id: btn_surplus_charging
+            state:
+              checked: !lambda return x;
+
+  - platform: homeassistant
+    id: fast_charging
+    entity_id: input_boolean.auto_schnellladen
+    trigger_on_initial_state: true
+    on_state:
+      then:
+        - lvgl.widget.update:
+            id: btn_fast_charging
+            state:
+              checked: !lambda return x;
+
+# ── NUMERIC SENSORS FROM HOME ASSISTANT ───────────────────────────────────────
+sensor:
+  - platform: homeassistant
+    id: solar_power
+    entity_id: sensor.total_solar_input_power
+    on_value:
+      then:
+        - lvgl.arc.update:
+            id: solar_arc
+            value: !lambda |-
+              if (x > 10000.0f) return 10000;
+              if (x < 0.0f) return 0;
+              return (int)x;
+        - lvgl.label.update:
+            id: solar_value_label
+            text: !lambda |
+              char buf[16];
+              if (x >= 1000.0f)
+                snprintf(buf, sizeof(buf), "%.1f kW", x / 1000.0f);
+              else
+                snprintf(buf, sizeof(buf), "%.0f W", x);
+              return std::string(buf);
+
+  - platform: homeassistant
+    id: battery_level
+    entity_id: sensor.achims_tesla_battery_level
+    on_value:
+      then:
+        - lvgl.arc.update:
+            id: battery_arc
+            value: !lambda return (int)x;
+        - lvgl.label.update:
+            id: battery_level_label
+            text: !lambda |
+              char buf[8];
+              snprintf(buf, sizeof(buf), "%.0f%%", x);
+              return std::string(buf);
+
+  - platform: homeassistant
+    id: battery_range
+    entity_id: sensor.achims_tesla_battery_range
+    on_value:
+      then:
+        - lvgl.label.update:
+            id: battery_range_label
+            text: !lambda |
+              char buf[16];
+              snprintf(buf, sizeof(buf), "%.0f km", x);
+              return std::string(buf);
+
 # ── SENSOR AND COVER STATES FROM HOME ASSISTANT ───────────────────────────────
 text_sensor:
   - platform: homeassistant
@@ -610,7 +682,21 @@ lvgl:
             border_width: 0
             bg_color: 0x334155
 
-    # ── PAGE 2: CHARGING (placeholder for future widgets) ─────────────────────
+    # ── PAGE 2: CHARGING ──────────────────────────────────────────────────────
+    #
+    #  Layout (480×480):
+    #
+    #  ┌──────────────────────────┬──────────────────────┐  y=10
+    #  │  Solar arc (0-10 kW)     │  Battery arc (0-100%)│
+    #  │     [arc + kW label]     │  [arc + % + km]      │
+    #  └──────────────────────────┴──────────────────────┘  y=230
+    #  ┌──────────────────────────────────────────────────┐  y=238
+    #  │           Überschussladen                        │
+    #  └──────────────────────────────────────────────────┘  y=328
+    #  ┌──────────────────────────────────────────────────┐  y=336
+    #  │               Schnellladen                       │
+    #  └──────────────────────────────────────────────────┘  y=426
+    #
     - id: charging_page
       bg_color: 0x0F172A
       bg_opa: COVER
@@ -618,13 +704,157 @@ lvgl:
         - lambda: 'lv_indev_wait_release(lv_indev_get_act());'
         - lvgl.page.previous:
       widgets:
-        - label:
-            align: CENTER
-            text: "Laden"
-            text_font: montserrat_36
-            text_color: 0x334155
 
-        # ── PAGE INDICATOR DOTS ─────────────────────────────────────────────
+        # ── SOLAR PRODUCTION CARD (left) ──────────────────────────────────────
+        # inner area (pad=12): 200×196
+        - obj:
+            x: 10
+            y: 10
+            width: 224
+            height: 220
+            bg_color: 0x1E293B
+            bg_opa: COVER
+            radius: 16
+            border_width: 0
+            pad_all: 12
+            widgets:
+              - label:
+                  x: 0
+                  y: 0
+                  text: "Solar"
+                  text_font: montserrat_14
+                  text_color: 0x64748B
+              # Arc: centered in 200px inner width → x=(200-156)/2=22
+              - arc:
+                  id: solar_arc
+                  x: 22
+                  y: 20
+                  width: 156
+                  height: 156
+                  min_value: 0
+                  max_value: 10000
+                  value: 0
+                  clickable: false
+                  arc_color: 0x334155
+                  indicator:
+                    arc_color: 0xFBBF24
+                  knob:
+                    bg_opa: TRANSP
+                    border_width: 0
+              # Value label overlaid on arc center (arc center inner: x=100, y=98)
+              - label:
+                  id: solar_value_label
+                  x: 55
+                  y: 87
+                  text: "0 W"
+                  text_font: montserrat_20
+                  text_color: 0xFBBF24
+
+        # ── BATTERY STATUS CARD (right) ───────────────────────────────────────
+        # inner area (pad=12): 200×196
+        - obj:
+            x: 246
+            y: 10
+            width: 224
+            height: 220
+            bg_color: 0x1E293B
+            bg_opa: COVER
+            radius: 16
+            border_width: 0
+            pad_all: 12
+            widgets:
+              - label:
+                  x: 0
+                  y: 0
+                  text: "Akku Auto"
+                  text_font: montserrat_14
+                  text_color: 0x64748B
+              # Arc: centered → x=(200-146)/2=27; center: x=100, y=93
+              - arc:
+                  id: battery_arc
+                  x: 27
+                  y: 20
+                  width: 146
+                  height: 146
+                  min_value: 0
+                  max_value: 100
+                  value: 0
+                  clickable: false
+                  arc_color: 0x334155
+                  indicator:
+                    arc_color: 0x22C55E
+                  knob:
+                    bg_opa: TRANSP
+                    border_width: 0
+              # Percentage label overlaid on arc center
+              - label:
+                  id: battery_level_label
+                  x: 68
+                  y: 79
+                  text: "0%"
+                  text_font: montserrat_24
+                  text_color: 0x22C55E
+              # Range below arc (arc bottom inner: y=20+146=166)
+              - label:
+                  id: battery_range_label
+                  x: 40
+                  y: 168
+                  text: "-- km"
+                  text_font: montserrat_14
+                  text_color: 0x64748B
+
+        # ── CHARGING CONTROL BUTTONS (full-width) ─────────────────────────────
+        - button:
+            id: btn_surplus_charging
+            x: 10
+            y: 238
+            width: 460
+            height: 90
+            checkable: true
+            radius: 14
+            border_width: 0
+            bg_color: 0x1E293B
+            text_color: 0x64748B
+            checked:
+              bg_color: 0x78350F
+              text_color: 0xFDE68A
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Ueberschussladen"
+                  text_font: montserrat_20
+            on_click:
+              - homeassistant.action:
+                  action: input_boolean.toggle
+                  data:
+                    entity_id: input_boolean.auto_uberschussladen
+
+        - button:
+            id: btn_fast_charging
+            x: 10
+            y: 336
+            width: 460
+            height: 90
+            checkable: true
+            radius: 14
+            border_width: 0
+            bg_color: 0x1E293B
+            text_color: 0x64748B
+            checked:
+              bg_color: 0x1E3A5F
+              text_color: 0xE2E8F0
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Schnellladen"
+                  text_font: montserrat_20
+            on_click:
+              - homeassistant.action:
+                  action: input_boolean.toggle
+                  data:
+                    entity_id: input_boolean.auto_schnellladen
+
+        # ── PAGE INDICATOR DOTS ───────────────────────────────────────────────
         - obj:
             x: 233
             y: 462
