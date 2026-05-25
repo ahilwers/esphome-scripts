@@ -1,0 +1,845 @@
+esphome:
+  name: touchscreen-garage-1
+  friendly_name: touchscreen-garage-1
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+# Enable logging
+logger:
+  level: DEBUG
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret touchscreen-garage-1_key
+
+ota:
+  - platform: esphome
+    password: !secret touchscreen-garage-1_ota_password
+    on_begin: # prevent screen flickering during OTA
+      - light.turn_off:
+          id: display_backlight
+          transition_length: 0s
+      - lambda: "id(display_backlight).loop();"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Touchscreen-Garage-1"
+    password: !secret touchscreen-garage-1_ap_password
+
+captive_portal:
+
+time:
+  - platform: homeassistant
+    id: ha_time
+    on_time_sync:
+      then:
+        - lvgl.label.update:
+            id: time_label
+            text: !lambda |
+              char buf[6];
+              auto t = id(ha_time).now();
+              snprintf(buf, sizeof(buf), "%02d:%02d", t.hour, t.minute);
+              return std::string(buf);
+    on_time:
+      - seconds: 0
+        minutes: /1
+        then:
+          - lvgl.label.update:
+              id: time_label
+              text: !lambda |
+                char buf[6];
+                auto t = id(ha_time).now();
+                snprintf(buf, sizeof(buf), "%02d:%02d", t.hour, t.minute);
+                return std::string(buf);
+
+output:
+  - platform: ledc
+    id: backlight_output
+    pin: GPIO38
+    frequency: 150Hz
+    min_power: 0.01
+    zero_means_zero: true
+
+light:
+  - platform: monochromatic
+    name: Backlight
+    id: display_backlight
+    output: backlight_output
+    restore_mode: ALWAYS_ON
+    default_transition_length: 1s
+
+spi:
+  - id: lcd_spi
+    clk_pin: GPIO48
+    mosi_pin: GPIO47
+
+i2c:
+  id: touchscreen_bus
+  sda: GPIO19
+  scl:
+    number: 45
+    ignore_strapping_warning: true
+
+display:
+  - platform: st7701s
+    id: tft_display
+    dimensions:
+      width: 480
+      height: 480
+    #    rotation: 270    #uncomment for placement with down-facing USB socket
+    spi_mode: MODE3
+    data_rate: 2MHz
+    color_order: RGB
+    invert_colors: False
+    cs_pin: 39
+    de_pin: 18
+    hsync_pin: 16
+    vsync_pin: 17
+    pclk_pin: 21
+    pclk_frequency: 12MHz
+    pclk_inverted: False
+    hsync_pulse_width: 8
+    hsync_front_porch: 10
+    hsync_back_porch: 20
+    vsync_pulse_width: 8
+    vsync_front_porch: 10
+    vsync_back_porch: 10
+    update_interval: never
+    auto_clear_enabled: False
+    init_sequence:
+      - 1
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x10] # CMD2_BKSEL_BK0
+      - [0xCD, 0x00] # disable MDT flag
+    data_pins:
+      red: [11, 12, 13, 14, 0]
+      green: [8, 20, 3, 46, 9, 10]
+      blue: [4, 5, 6, 7, 15]
+
+touchscreen:
+  - platform: gt911
+    id: tft_touch
+    display: tft_display
+#    transform:     #uncomment for placement with down-facing USB socket
+#      swap_xy: true
+#      mirror_x: true
+    on_release:
+      # Wake up the screen on any touch without triggering buttons.
+      # When LVGL is paused it does not process input, so the touch that
+      # wakes the screen cannot accidentally click anything underneath.
+      - if:
+          condition:
+            lvgl.is_paused:
+          then:
+            - lvgl.resume:
+            - lvgl.widget.redraw:
+            - light.turn_on: display_backlight
+
+# ── LIGHT STATES FROM HOME ASSISTANT ──────────────────────────────────────────
+# Note: main button controls Garage 1 own light (output_0); Garage 2 light is secondary.
+binary_sensor:
+  - platform: homeassistant
+    id: light_main
+    entity_id: light.schaltaktor_garage_output_0
+    trigger_on_initial_state: true
+    on_state:
+      then:
+        - lvgl.widget.update:
+            id: btn_mainlight
+            state:
+              checked: !lambda return x;
+
+  - platform: homeassistant
+    id: light_garage2
+    entity_id: light.schaltaktor_garage_output_1
+    trigger_on_initial_state: true
+    on_state:
+      then:
+        - lvgl.widget.update:
+            id: btn_light_garage2
+            state:
+              checked: !lambda return x;
+
+  - platform: homeassistant
+    id: light_front
+    entity_id: light.schaltaktor_garage_output_2
+    trigger_on_initial_state: true
+    on_state:
+      then:
+        - lvgl.widget.update:
+            id: btn_light_front
+            state:
+              checked: !lambda return x;
+
+  - platform: homeassistant
+    id: light_rear
+    entity_id: light.schaltaktor_garage_output_3
+    trigger_on_initial_state: true
+    on_state:
+      then:
+        - lvgl.widget.update:
+            id: btn_light_rear
+            state:
+              checked: !lambda return x;
+
+# ── IRRIGATION STATES FROM HOME ASSISTANT ─────────────────────────────────────
+  - platform: homeassistant
+    id: irr_h1
+    entity_id: input_boolean.bewasserung_kreis_h1
+    trigger_on_initial_state: true
+    on_state:
+      then:
+        - lvgl.widget.update:
+            id: btn_irr_h1
+            state:
+              checked: !lambda return x;
+
+  - platform: homeassistant
+    id: irr_h3
+    entity_id: input_boolean.bewasserung_kreis_h3
+    trigger_on_initial_state: true
+    on_state:
+      then:
+        - lvgl.widget.update:
+            id: btn_irr_h3
+            state:
+              checked: !lambda return x;
+
+  - platform: homeassistant
+    id: irr_h2
+    entity_id: input_boolean.bewasserung_kreis_h2
+    trigger_on_initial_state: true
+    on_state:
+      then:
+        - lvgl.widget.update:
+            id: btn_irr_h2
+            state:
+              checked: !lambda return x;
+
+  - platform: homeassistant
+    id: irr_a1
+    entity_id: input_boolean.bewasserung_kreis_a1
+    trigger_on_initial_state: true
+    on_state:
+      then:
+        - lvgl.widget.update:
+            id: btn_irr_a1
+            state:
+              checked: !lambda return x;
+
+  - platform: homeassistant
+    id: irr_a2
+    entity_id: input_boolean.bewasserung_kreis_a2
+    trigger_on_initial_state: true
+    on_state:
+      then:
+        - lvgl.widget.update:
+            id: btn_irr_a2
+            state:
+              checked: !lambda return x;
+
+# ── SENSOR AND COVER STATES FROM HOME ASSISTANT ───────────────────────────────
+text_sensor:
+  - platform: homeassistant
+    id: temp_outdoor
+    entity_id: sensor.temperatursensor_aussen_temperature
+    on_value:
+      then:
+        - lvgl.label.update:
+            id: temp_outdoor_label
+            text: !lambda return x + " °C";
+
+  - platform: homeassistant
+    id: cover_garage1_state
+    entity_id: cover.garage_door_opener_garage_01_tor
+    on_value:
+      then:
+        - lvgl.label.update:
+            id: garage1_status_label
+            text: !lambda |
+              if (x == "open") return std::string("Offen");
+              if (x == "closed") return std::string("Geschlossen");
+              if (x == "opening") return std::string("Oeffnet...");
+              if (x == "closing") return std::string("Schliesst...");
+              return std::string("?");
+
+  - platform: homeassistant
+    id: cover_garage2_state
+    entity_id: cover.garage_door_opener_garage_02_tor
+    on_value:
+      then:
+        - lvgl.label.update:
+            id: garage2_status_label
+            text: !lambda |
+              if (x == "open") return std::string("Offen");
+              if (x == "closed") return std::string("Geschlossen");
+              if (x == "opening") return std::string("Oeffnet...");
+              if (x == "closing") return std::string("Schliesst...");
+              return std::string("?");
+
+# ── LVGL UI ───────────────────────────────────────────────────────────────────
+#
+#  Page 1 layout (480×480):
+#
+#  ┌──────────────────────────┬──────────────────────┐
+#  │                          │  Garage 1            │
+#  │   Main light button      │  [Auf]               │
+#  │   (250×240)              │  [Stop]              │
+#  │                          │  [Zu]                │
+#  │                          ├──────────────────────┤
+#  ├──────────────────────────│  Garage 2            │
+#  │ [G.2] [front] [rear]     │  [Auf]               │
+#  │  78×80 each              │  [Stop]              │
+#  │                          │  [Zu]                │
+#  └──────────────────────────┴──────────────────────┘
+#
+#  Page 2 layout (480×480):
+#
+#  ┌────────────────────────────────────────────┐  y=10
+#  │  Wassersteckdose       (full-width, h=110) │
+#  └────────────────────────────────────────────┘  y=120
+#  ┌─────────────────────┬──────────────────────┐  y=130
+#  │  17a vor dem Haus   │  17a neben dem Haus  │  h=150
+#  └─────────────────────┴──────────────────────┘  y=280
+#  ┌─────────────────────┬──────────────────────┐  y=290
+#  │  17 vor dem Haus 1  │  17 vor dem Haus 2   │  h=150
+#  └─────────────────────┴──────────────────────┘  y=440
+#
+lvgl:
+  on_idle:
+    # Turn off the display after 1 minute of inactivity.
+    timeout: 60s
+    then:
+      - light.turn_off: display_backlight
+      - lvgl.pause:
+
+  pages:
+    # ── PAGE 1: MAIN CONTROL ──────────────────────────────────────────────────
+    - id: main_page
+      bg_color: 0x0F172A
+      bg_opa: COVER
+      on_swipe_left:
+        - lambda: 'lv_indev_wait_release(lv_indev_get_act());'
+        - lvgl.page.next:
+
+      widgets:
+
+        # ── MAIN LIGHT BUTTON (top-left, large) ───────────────────────────────
+        - button:
+            id: btn_mainlight
+            x: 10
+            y: 10
+            width: 250
+            height: 240
+            checkable: true
+            radius: 18
+            border_width: 0
+            bg_color: 0x1E3A5F
+            checked:
+              bg_color: 0x1D4ED8
+            pressed:
+              bg_color: 0x172F4A
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Licht"
+                  text_font: montserrat_20
+                  text_color: 0xE2E8F0
+            on_click:
+              - homeassistant.action:
+                  action: light.toggle
+                  data:
+                    entity_id: light.schaltaktor_garage_output_0
+
+        # ── LIGHT BUTTONS ROW (below main button) ─────────────────────────────
+        - button:
+            id: btn_light_garage2
+            x: 10
+            y: 258
+            width: 78
+            height: 80
+            checkable: true
+            radius: 12
+            border_width: 0
+            bg_color: 0x1E293B
+            text_color: 0x64748B
+            checked:
+              bg_color: 0x92400E
+              text_color: 0xFDE68A
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Licht\nGarage 2"
+                  text_font: montserrat_12
+            on_click:
+              - homeassistant.action:
+                  action: light.toggle
+                  data:
+                    entity_id: light.schaltaktor_garage_output_1
+
+        - button:
+            id: btn_light_front
+            x: 96
+            y: 258
+            width: 78
+            height: 80
+            checkable: true
+            radius: 12
+            border_width: 0
+            bg_color: 0x1E293B
+            text_color: 0x64748B
+            checked:
+              bg_color: 0x92400E
+              text_color: 0xFDE68A
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Licht\nvorne"
+                  text_font: montserrat_12
+            on_click:
+              - homeassistant.action:
+                  action: light.toggle
+                  data:
+                    entity_id: light.schaltaktor_garage_output_2
+
+        - button:
+            id: btn_light_rear
+            x: 182
+            y: 258
+            width: 78
+            height: 80
+            checkable: true
+            radius: 12
+            border_width: 0
+            bg_color: 0x1E293B
+            text_color: 0x64748B
+            checked:
+              bg_color: 0x92400E
+              text_color: 0xFDE68A
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Licht\nhinten"
+                  text_font: montserrat_12
+            on_click:
+              - homeassistant.action:
+                  action: light.toggle
+                  data:
+                    entity_id: light.schaltaktor_garage_output_3
+
+        # ── TEMPERATURE + TIME DISPLAY (below light buttons) ──────────────────
+        - obj:
+            x: 10
+            y: 348
+            width: 250
+            height: 88
+            bg_color: 0x1E293B
+            bg_opa: COVER
+            radius: 14
+            border_width: 0
+            pad_all: 10
+            widgets:
+              # Left column: outdoor temperature
+              - label:
+                  x: 0
+                  y: 0
+                  text: "Aussen"
+                  text_font: montserrat_12
+                  text_color: 0x64748B
+              - label:
+                  id: temp_outdoor_label
+                  x: 0
+                  y: 18
+                  text: "..."
+                  text_font: montserrat_24
+                  text_color: 0xE2E8F0
+              # Right column: time
+              - label:
+                  x: 120
+                  y: 0
+                  text: "Uhrzeit"
+                  text_font: montserrat_12
+                  text_color: 0x64748B
+              - label:
+                  id: time_label
+                  x: 120
+                  y: 18
+                  text: "--:--"
+                  text_font: montserrat_24
+                  text_color: 0xE2E8F0
+
+        # ── GARAGE 1 PANEL (right column, top) ────────────────────────────────
+        - obj:
+            x: 270
+            y: 10
+            width: 200
+            height: 228
+            bg_color: 0x1E293B
+            bg_opa: COVER
+            radius: 16
+            border_width: 0
+            pad_all: 10
+            widgets:
+              - label:
+                  x: 0
+                  y: 0
+                  text: "Garage 1"
+                  text_font: montserrat_16
+                  text_color: 0x64748B
+              - label:
+                  id: garage1_status_label
+                  x: 0
+                  y: 24
+                  text: "..."
+                  text_font: montserrat_14
+                  text_color: 0xE2E8F0
+              - button:
+                  x: 0
+                  y: 52
+                  width: 180
+                  height: 44
+                  radius: 8
+                  border_width: 0
+                  bg_color: 0x14532D
+                  pressed:
+                    bg_color: 0x0F3D22
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: "  Auf"
+                        text_font: montserrat_14
+                        text_color: 0x86EFAC
+                  on_click:
+                    - homeassistant.action:
+                        action: cover.open_cover
+                        data:
+                          entity_id: cover.garage_door_opener_garage_01_tor
+              - button:
+                  x: 0
+                  y: 102
+                  width: 180
+                  height: 44
+                  radius: 8
+                  border_width: 0
+                  bg_color: 0x334155
+                  pressed:
+                    bg_color: 0x1E293B
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: "Stop"
+                        text_font: montserrat_14
+                        text_color: 0xCBD5E1
+                  on_click:
+                    - homeassistant.action:
+                        action: cover.stop_cover
+                        data:
+                          entity_id: cover.garage_door_opener_garage_01_tor
+              - button:
+                  x: 0
+                  y: 152
+                  width: 180
+                  height: 44
+                  radius: 8
+                  border_width: 0
+                  bg_color: 0x7F1D1D
+                  pressed:
+                    bg_color: 0x5C1515
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: "  Zu"
+                        text_font: montserrat_14
+                        text_color: 0xFCA5A5
+                  on_click:
+                    - homeassistant.action:
+                        action: cover.close_cover
+                        data:
+                          entity_id: cover.garage_door_opener_garage_01_tor
+
+        # ── GARAGE 2 PANEL (right column, bottom) ─────────────────────────────
+        - obj:
+            x: 270
+            y: 246
+            width: 200
+            height: 224
+            bg_color: 0x1E293B
+            bg_opa: COVER
+            radius: 16
+            border_width: 0
+            pad_all: 10
+            widgets:
+              - label:
+                  x: 0
+                  y: 0
+                  text: "Garage 2"
+                  text_font: montserrat_16
+                  text_color: 0x64748B
+              - label:
+                  id: garage2_status_label
+                  x: 0
+                  y: 24
+                  text: "..."
+                  text_font: montserrat_14
+                  text_color: 0xE2E8F0
+              - button:
+                  x: 0
+                  y: 52
+                  width: 180
+                  height: 44
+                  radius: 8
+                  border_width: 0
+                  bg_color: 0x14532D
+                  pressed:
+                    bg_color: 0x0F3D22
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: "  Auf"
+                        text_font: montserrat_14
+                        text_color: 0x86EFAC
+                  on_click:
+                    - homeassistant.action:
+                        action: cover.open_cover
+                        data:
+                          entity_id: cover.garage_door_opener_garage_02_tor
+              - button:
+                  x: 0
+                  y: 102
+                  width: 180
+                  height: 44
+                  radius: 8
+                  border_width: 0
+                  bg_color: 0x334155
+                  pressed:
+                    bg_color: 0x1E293B
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: "Stop"
+                        text_font: montserrat_14
+                        text_color: 0xCBD5E1
+                  on_click:
+                    - homeassistant.action:
+                        action: cover.stop_cover
+                        data:
+                          entity_id: cover.garage_door_opener_garage_02_tor
+              - button:
+                  x: 0
+                  y: 152
+                  width: 180
+                  height: 44
+                  radius: 8
+                  border_width: 0
+                  bg_color: 0x7F1D1D
+                  pressed:
+                    bg_color: 0x5C1515
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: "  Zu"
+                        text_font: montserrat_14
+                        text_color: 0xFCA5A5
+                  on_click:
+                    - homeassistant.action:
+                        action: cover.close_cover
+                        data:
+                          entity_id: cover.garage_door_opener_garage_02_tor
+
+        # ── PAGE INDICATOR DOTS ───────────────────────────────────────────────
+        - obj:
+            x: 233
+            y: 462
+            width: 10
+            height: 10
+            radius: 5
+            border_width: 0
+            bg_color: 0x64748B
+        - obj:
+            x: 249
+            y: 462
+            width: 10
+            height: 10
+            radius: 5
+            border_width: 0
+            bg_color: 0x334155
+
+    # ── PAGE 2: BEWÄSSERUNG ───────────────────────────────────────────────────
+    - id: irrigation_page
+      bg_color: 0x0F172A
+      bg_opa: COVER
+      on_swipe_right:
+        - lambda: 'lv_indev_wait_release(lv_indev_get_act());'
+        - lvgl.page.previous:
+
+      widgets:
+
+        # ── WASSERSTECKDOSE (full-width, prominent) ────────────────────────────
+        - button:
+            id: btn_irr_h1
+            x: 10
+            y: 10
+            width: 460
+            height: 110
+            checkable: true
+            radius: 16
+            border_width: 0
+            bg_color: 0x1E3A5F
+            text_color: 0x93C5FD
+            checked:
+              bg_color: 0x155E75
+              text_color: 0x22D3EE
+            pressed:
+              bg_color: 0x172F4A
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Wassersteckdose"
+                  text_font: montserrat_24
+            on_click:
+              - homeassistant.action:
+                  action: input_boolean.toggle
+                  data:
+                    entity_id: input_boolean.bewasserung_kreis_h1
+
+        # ── 17a VOR DEM HAUS (top-left) ────────────────────────────────────────
+        - button:
+            id: btn_irr_h3
+            x: 10
+            y: 130
+            width: 225
+            height: 150
+            checkable: true
+            radius: 14
+            border_width: 0
+            bg_color: 0x1E293B
+            text_color: 0x64748B
+            checked:
+              bg_color: 0x0C4A6E
+              text_color: 0x7DD3FC
+            pressed:
+              bg_color: 0x172030
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "17a vor\ndem Haus"
+                  text_font: montserrat_16
+            on_click:
+              - homeassistant.action:
+                  action: input_boolean.toggle
+                  data:
+                    entity_id: input_boolean.bewasserung_kreis_h3
+
+        # ── 17a NEBEN DEM HAUS (top-right) ────────────────────────────────────
+        - button:
+            id: btn_irr_h2
+            x: 245
+            y: 130
+            width: 225
+            height: 150
+            checkable: true
+            radius: 14
+            border_width: 0
+            bg_color: 0x1E293B
+            text_color: 0x64748B
+            checked:
+              bg_color: 0x0C4A6E
+              text_color: 0x7DD3FC
+            pressed:
+              bg_color: 0x172030
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "17a neben\ndem Haus"
+                  text_font: montserrat_16
+            on_click:
+              - homeassistant.action:
+                  action: input_boolean.toggle
+                  data:
+                    entity_id: input_boolean.bewasserung_kreis_h2
+
+        # ── 17 VOR DEM HAUS 1 (bottom-left) ───────────────────────────────────
+        - button:
+            id: btn_irr_a1
+            x: 10
+            y: 290
+            width: 225
+            height: 150
+            checkable: true
+            radius: 14
+            border_width: 0
+            bg_color: 0x1E293B
+            text_color: 0x64748B
+            checked:
+              bg_color: 0x0C4A6E
+              text_color: 0x7DD3FC
+            pressed:
+              bg_color: 0x172030
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "17 vor dem\nHaus 1"
+                  text_font: montserrat_16
+            on_click:
+              - homeassistant.action:
+                  action: input_boolean.toggle
+                  data:
+                    entity_id: input_boolean.bewasserung_kreis_a1
+
+        # ── 17 VOR DEM HAUS 2 (bottom-right) ──────────────────────────────────
+        - button:
+            id: btn_irr_a2
+            x: 245
+            y: 290
+            width: 225
+            height: 150
+            checkable: true
+            radius: 14
+            border_width: 0
+            bg_color: 0x1E293B
+            text_color: 0x64748B
+            checked:
+              bg_color: 0x0C4A6E
+              text_color: 0x7DD3FC
+            pressed:
+              bg_color: 0x172030
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "17 vor dem\nHaus 2"
+                  text_font: montserrat_16
+            on_click:
+              - homeassistant.action:
+                  action: input_boolean.toggle
+                  data:
+                    entity_id: input_boolean.bewasserung_kreis_a2
+
+        # ── PAGE INDICATOR DOTS ───────────────────────────────────────────────
+        - obj:
+            x: 233
+            y: 462
+            width: 10
+            height: 10
+            radius: 5
+            border_width: 0
+            bg_color: 0x334155
+        - obj:
+            x: 249
+            y: 462
+            width: 10
+            height: 10
+            radius: 5
+            border_width: 0
+            bg_color: 0x64748B
