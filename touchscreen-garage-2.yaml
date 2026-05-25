@@ -304,6 +304,23 @@ text_sensor:
               if (x == "closing") return std::string("Schliesst...");
               return std::string("?");
 
+  - platform: homeassistant
+    id: cable_lock_state
+    entity_id: lock.achims_tesla_charge_cable_lock
+    on_value:
+      then:
+        - lvgl.widget.update:
+            id: btn_cable_lock
+            state:
+              checked: !lambda return x == "unlocked";
+        - lvgl.label.update:
+            id: cable_lock_status_label
+            text: !lambda |
+              if (x == "unlocked") return std::string("Entriegelt");
+              if (x == "unlocking") return std::string("Entriegelt...");
+              if (x == "locking") return std::string("Verriegelt...");
+              return std::string("Verriegelt");
+
 # ── LVGL UI ───────────────────────────────────────────────────────────────────
 #
 #  Layout (480×480):
@@ -691,11 +708,11 @@ lvgl:
     #  │     [arc + kW label]     │  [arc + % + km]      │
     #  └──────────────────────────┴──────────────────────┘  y=230
     #  ┌──────────────────────────────────────────────────┐  y=238
-    #  │           Überschussladen                        │
+    #  │               Kabelschloss                       │
     #  └──────────────────────────────────────────────────┘  y=328
-    #  ┌──────────────────────────────────────────────────┐  y=336
-    #  │               Schnellladen                       │
-    #  └──────────────────────────────────────────────────┘  y=426
+    #  ┌───────────────────────┬──────────────────────────┐  y=336
+    #  │    Überschussladen    │       Schnellladen        │
+    #  └───────────────────────┴──────────────────────────┘  y=426
     #
     - id: charging_page
       bg_color: 0x0F172A
@@ -803,12 +820,56 @@ lvgl:
                   text_font: montserrat_14
                   text_color: 0x64748B
 
-        # ── CHARGING CONTROL BUTTONS (full-width) ─────────────────────────────
+        # ── KABELSCHLOSS BUTTON (full-width) ──────────────────────────────────
         - button:
-            id: btn_surplus_charging
+            id: btn_cable_lock
             x: 10
             y: 238
             width: 460
+            height: 90
+            checkable: true
+            radius: 14
+            border_width: 0
+            bg_color: 0x1E293B
+            text_color: 0x64748B
+            checked:
+              bg_color: 0x7C2D12
+              text_color: 0xFED7AA
+            pressed:
+              bg_color: 0x172030
+            widgets:
+              - label:
+                  align: CENTER
+                  y: -14
+                  text: "Ladekabel"
+                  text_font: montserrat_18
+              - label:
+                  id: cable_lock_status_label
+                  align: CENTER
+                  y: 14
+                  text: "Verriegelt"
+                  text_font: montserrat_14
+            on_click:
+              - if:
+                  condition:
+                    lambda: return id(cable_lock_state).state == "locked";
+                  then:
+                    - homeassistant.action:
+                        action: lock.unlock
+                        data:
+                          entity_id: lock.achims_tesla_charge_cable_lock
+                  else:
+                    - homeassistant.action:
+                        action: lock.lock
+                        data:
+                          entity_id: lock.achims_tesla_charge_cable_lock
+
+        # ── LADEMODUS BUTTONS (nebeneinander) ─────────────────────────────────
+        - button:
+            id: btn_surplus_charging
+            x: 10
+            y: 336
+            width: 225
             height: 90
             checkable: true
             radius: 14
@@ -822,7 +883,7 @@ lvgl:
               - label:
                   align: CENTER
                   text: "Ueberschussladen"
-                  text_font: montserrat_20
+                  text_font: montserrat_16
             on_click:
               - homeassistant.action:
                   action: input_boolean.toggle
@@ -831,9 +892,9 @@ lvgl:
 
         - button:
             id: btn_fast_charging
-            x: 10
+            x: 245
             y: 336
-            width: 460
+            width: 225
             height: 90
             checkable: true
             radius: 14
@@ -847,7 +908,7 @@ lvgl:
               - label:
                   align: CENTER
                   text: "Schnellladen"
-                  text_font: montserrat_20
+                  text_font: montserrat_16
             on_click:
               - homeassistant.action:
                   action: input_boolean.toggle
