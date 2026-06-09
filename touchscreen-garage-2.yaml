@@ -303,6 +303,14 @@ text_sensor:
               if (x == "opening") return std::string("Oeffnet...");
               if (x == "closing") return std::string("Schliesst...");
               return std::string("?");
+        # Wake the screen when garage door 2 starts opening
+        - if:
+            condition:
+              lambda: 'return x == "opening";'
+            then:
+              - lvgl.resume:
+              - lvgl.widget.redraw:
+              - light.turn_on: display_backlight
 
   - platform: homeassistant
     id: cable_lock_state
@@ -340,7 +348,7 @@ text_sensor:
 lvgl:
   on_idle:
     # Turn off the display after 1 minute of inactivity.
-    timeout: 60s
+    timeout: 5min
     then:
       - light.turn_off: display_backlight
       - lvgl.pause:
